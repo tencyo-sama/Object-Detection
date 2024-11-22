@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Object Detection</title>
+  <style>
+    /* 画面全体にcanvasを表示 */
+    #output {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover; /* アスペクト比を維持したまま画面全体に表示 */
+      position: fixed; /* 画面全体に固定 */
+      top: 0;
+      left: 0;
+      z-index: -1; /* ボタンの背後に表示 */
+    }
+
+    /* ボタンの位置を調整 */
+    .buttons {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+    }
+
+    button {
+      padding: 15px 30px;
+      font-size: 18px;
+      margin: 0 10px;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/object_detection.js" async></script>
+</head>
+
+<body>
+  <div class="container">
+    <canvas id="output"></canvas>
+    <video id="input" style="display:none" playsinline></video>
+  </div>
+  <div class="buttons">
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('input');
+    const canvas = document.getElementById('output');
+    const ctx = canvas.getContext('2d');
+
+    // カメラの初期設定
+    const camera = new Camera(video, {
+      onFrame: async () => {
+        await objectDetector.send({image: video});
+      },
+      width: 1280, // 解像度を高く設定 (必要に応じて調整)
+      height: 720, // 解像度を高く設定 (必要に応じて調整)
+      facingMode: 'environment' // 背面カメラを使用
+    });
+
+    // 物体検出の初期設定
+    const config = {
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/${file}`;
+      }
+    };
+
+    const objectDetector = new ObjectDetection(config);
+    objectDetector.setOptions({
+      modelComplexity: 1,
+    });
+
+    objectDetector.onResults(results => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // カメラの映像を描画
+      ctx.save();
+      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height); 
+      ctx.restore();      
+
+      if (results.detections) {
+        results.detections.forEach(detection => {
+          // 境界ボックスを描画
+          const boundingBox = detection.boundingBox;
+          const x = boundingBox.xmin * canvas.width;
+          const y = boundingBox.ymin * canvas.height;
+          const width = boundingBox.width * canvas.width;
+          const height = boundingBox.height * canvas.height;
+
+          ctx.strokeStyle = 'red';
+          ctx.lineWidth = 4;
+          ctx.strokeRect(x, y, width, height);
+
+          // カテゴリ名と信頼度を表示
+          const categoryName = detection.categoryName;
+          const score = detection.score[0];
+
+          ctx.fillStyle = 'red';
+          ctx.font = '16px Arial';
+          ctx.fillText(`${categoryName} (${score.toFixed(2)})`, x, y - 10);
+        });
+      }
+    });
+
+    document.getElementById('start').addEventListener('click', () => {
+      camera.start();
+    });
+    document.getElementById('stop').addEventListener('click', () => {
+      camera.stop();
+    });
+  </script>
+</body>
+</html>
