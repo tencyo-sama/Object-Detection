@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Object Detection</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/object_detection.js"></script>
+  <!-- TensorFlow.jsとCOCO-SSDモデルを読み込む -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
   <style>
     body {
       margin: 0;
@@ -63,7 +63,7 @@
 <body>
   <div class="container">
     <canvas id="output"></canvas>
-    <video id="input" style="display: none;"></video>
+    <video id="input" style="display: none;" playsinline></video>
   </div>
   <div class="button-container">
     <button id="start">start</button>
@@ -76,6 +76,8 @@
     const canvas = document.getElementById('output');
     const messageDiv = document.getElementById('message');
     const ctx = canvas.getContext('2d');
+    let model = null;
+    let isRunning = false;
 
     // キャンバスのサイズをウィンドウに合わせる
     function resizeCanvas() {
@@ -84,72 +86,105 @@
       canvas.height = container.clientHeight;
     }
     
-    // 初期サイズ設定とリサイズイベントの登録
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    const config = {
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/${file}`;
+    // モデルの読み込み
+    async function loadModel() {
+      messageDiv.textContent = 'モデルを読み込んでいます...';
+      try {
+        model = await cocoSsd.load();
+        messageDiv.textContent = 'モデルの読み込みが完了しました';
+      } catch (error) {
+        console.error('モデル読み込みエラー:', error);
+        messageDiv.textContent = 'モデルの読み込みに失敗しました';
       }
-    };
+    }
 
-    const objectDetector = new ObjectDetection(config);
-    objectDetector.setOptions({
-      modelComplexity: 1,
-      maxNumObjects: 5,
-      minDetectionConfidence: 0.5,
-    });
-
-    const camera = new Camera(video, {
-      onFrame: async () => {
-        await objectDetector.send({image: video});
-      },
-      width: 1280, // より高解像度に設定
-      height: 720,
-      facingMode: {exact: "environment"} // 背面カメラを強制指定
-    });
-
-    objectDetector.onResults(results => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-      
-      if (results.detections) {
-        results.detections.forEach(detection => {
-          // 境界ボックスを描画
-          const bbox = detection.boundingBox;
-          const x = bbox.xMin * canvas.width;
-          const y = bbox.yMin * canvas.height;
-          const width = bbox.width * canvas.width;
-          const height = bbox.height * canvas.height;
-          
-          // 太めの枠線で視認性を向上
-          ctx.strokeStyle = '#00FF00';
-          ctx.lineWidth = 6;
-          ctx.strokeRect(x, y, width, height);
-          
-          // 検出結果のラベルを表示
-          const score = (detection.score[0] * 100).toFixed(1);
-          messageDiv.textContent = `${detection.categoryName} (${score}%)`;
+    // カメラのセットアップ
+    async function setupCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { exact: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
         });
-      } else {
-        messageDiv.textContent = '';
+        video.srcObject = stream;
+        return new Promise((resolve) => {
+          video.onloadedmetadata = () => {
+            video.play();
+            resolve();
+          };
+        });
+      } catch (error) {
+        console.error('カメラエラー:', error);
+        messageDiv.textContent = 'カメラを起動できませんでした';
+        throw error;
       }
-    });
+    }
 
+    // 物体検出の実行
+    async function detectObjects() {
+      if (!isRunning) return;
+      
+      try {
+        const predictions = await model.detect(video);
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        predictions.forEach(prediction => {
+          // 境界ボックスを描画
+          ctx.strokeStyle = '#00FF00';
+          ctx.lineWidth = 4;
+          ctx.strokeRect(
+            prediction.bbox[0] * (canvas.width / video.videoWidth),
+            prediction.bbox[1] * (canvas.height / video.videoHeight),
+            prediction.bbox[2] * (canvas.width / video.videoWidth),
+            prediction.bbox[3] * (canvas.height / video.videoHeight)
+          );
+          
+          // ラベルを表示
+          const score = (prediction.score * 100).toFixed(1);
+          messageDiv.textContent = `${prediction.class} (${score}%)`;
+        });
+      } catch (error) {
+        console.error('検出エラー:', error);
+      }
+      
+      requestAnimationFrame(detectObjects);
+    }
+
+    // 開始ボタンの処理
     document.getElementById('start').addEventListener('click', async () => {
       try {
-        await camera.start();
+        if (!model) {
+          await loadModel();
+        }
+        await setupCamera();
+        isRunning = true;
+        detectObjects();
       } catch (error) {
-        console.error('カメラ起動エラー:', error);
-        messageDiv.textContent = 'カメラを起動できませんでした';
+        console.error('起動エラー:', error);
       }
     });
 
+    // 停止ボタンの処理
     document.getElementById('stop').addEventListener('click', () => {
-      camera.stop();
+      isRunning = false;
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+      }
+      video.srcObject = null;
       messageDiv.textContent = '';
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
     });
+
+    // 初期化時にモデルを読み込む
+    loadModel();
   </script>
 </body>
 </html>
