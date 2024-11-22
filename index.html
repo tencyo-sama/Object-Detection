@@ -3,117 +3,90 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-
+  <title>Object Detection</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" async></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" async></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/object_detection.js" async></script>
-
   <style>
     #output {
-      width: 100%; /* 画面幅に合わせる */
-      height: auto; /* アスペクト比を維持 */
-      max-height: 100vh; /* 画面高さを超えないようにする */
+      position: relative; /* OK! メッセージの配置のために必要 */
     }
-    .container {
-      position: relative; /* OK! 表示位置を調整するために必要 */
-      width: 100%; /* 画面幅に合わせる */
-      max-height: 100vh; /* 画面高さを超えないようにする */
-      overflow: hidden; /* はみ出した部分を隠す */
-    }
-    #okMessage {
+    .message {
       position: absolute;
-      bottom: 20px; /* 下からの位置 */
+      bottom: 20px; /* カメラ画面の下に表示 */
       left: 50%;
-      transform: translateX(-50%); /* 中央揃え */
-      font-size: 30px;
-      color: red;
-      z-index: 1; /* canvas の上に表示 */
+      transform: translateX(-50%);
+      background-color: rgba(0, 0, 0, 0.5); /* 背景色を半透明の黒に */
+      color: white;
+      padding: 10px 20px;
+      border-radius: 5px;
+      font-size: 20px;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <canvas id="output"></canvas>
-    <video id="input" style="display:none" playsinline></video>
-    <span id="okMessage"></span>
+    <video id="input" style="display: none;"></video>
   </div>
   <button id="start" style="padding: 15px 30px; font-size: 18px; margin: 10px;">start</button>
   <button id="stop" style="padding: 15px 30px; font-size: 18px; margin: 10px;">stop</button>
+  <div class="message" id="message"></div>
 
   <script>
     const video = document.getElementById('input');
     const canvas = document.getElementById('output');
     const ctx = canvas.getContext('2d');
-    const okMessage = document.getElementById('okMessage');
+    const messageDiv = document.getElementById('message');
 
     const config = {
       locateFile: (file) => {
         return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/${file}`;
       }
     };
-
     const objectDetector = new ObjectDetection(config);
-
     objectDetector.setOptions({
       modelComplexity: 1,
     });
-
-    // カメラのサイズを設定 (標準のアスペクト比を維持)
-    const constraints = {
-      audio: false,
-      video: {
-        facingMode: 'environment', // 背面カメラ
-        width: { ideal: 1280 }, // カメラの理想的な幅
-        height: { ideal: 720 } // カメラの理想的な高さ
-      }
-    };
 
     const camera = new Camera(video, {
       onFrame: async () => {
         await objectDetector.send({ image: video });
       },
-      ...constraints.video // カメラのサイズ設定を適用
+      width: 600,
+      height: 400,
+      facingMode: 'environment' // 背面カメラを使用する設定
     });
 
     objectDetector.onResults(results => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
-      okMessage.textContent = ""; // 初期化
-
       if (results.detections) {
+        let message = ""; // 表示するメッセージ
+
         results.detections.forEach(detection => {
+          // 境界ボックスを描画
+          const bbox = detection.boundingBox;
+          const x = bbox.xMin * canvas.width;
+          const y = bbox.yMin * canvas.height;
+          const width = bbox.width * canvas.width;
+          const height = bbox.height * canvas.height;
 
-          // OKサインの検出 (Handsライブラリを使用していないため、単純化した判定)
-          if(detection.categoryName === "Person" && detection.score > 0.8){
-              okMessage.textContent = "OK!";
-          }
-
-          // 境界ボックスを描画 (例)
-          const boundingBox = detection.boundingBox;
-          ctx.strokeStyle = 'red';
+          ctx.strokeStyle = 'green';
           ctx.lineWidth = 4;
-          ctx.strokeRect(boundingBox.xMin * canvas.width, boundingBox.yMin * canvas.height,
-                        (boundingBox.xMax - boundingBox.xMin) * canvas.width,
-                        (boundingBox.yMax - boundingBox.yMin) * canvas.height);
+          ctx.strokeRect(x, y, width, height);
+          
+          message = detection.categoryName + ' (' + (detection.score[0] * 100).toFixed(2) + '%)';
+          messageDiv.textContent = message;
         });
+      } else {
+        messageDiv.textContent = '';
       }
     });
 
-    document.getElementById('start').addEventListener('click', () => {
-      camera.start();
-    });
-
-    document.getElementById('stop').addEventListener('click', () => {
-      camera.stop();
-    });
-
-     // カメラのサイズに合わせてcanvasのサイズを調整
-    video.addEventListener('loadedmetadata', () => {
-      const aspectRatio = video.videoWidth / video.videoHeight;
-      canvas.width = window.innerWidth; // 画面幅に合わせる
-      canvas.height = canvas.width / aspectRatio; // アスペクト比を維持
-    });
+    document.getElementById('start').addEventListener('click', () => camera.start());
+    document.getElementById('stop').addEventListener('click', () => camera.stop());
   </script>
 
 </body>
