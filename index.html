@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -77,6 +77,9 @@
       100% { transform: rotate(360deg); }
     }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/object_detection.js" async></script>
 </head>
 <body>
   <div class="container">
@@ -91,10 +94,6 @@
     <button id="start">開始</button>
     <button id="stop" disabled>停止</button>
   </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.4/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.4/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection@0.5/object_detection.js" crossorigin="anonymous"></script>
 
   <script>
     let camera = null;
@@ -125,6 +124,7 @@
       updateMessage('準備完了');
     });
 
+
     function resizeCanvas() {
       const container = document.querySelector('.container');
       canvas.width = container.clientWidth;
@@ -151,11 +151,14 @@
 
 
     async function createDetector() {
-      showLoading(true);
-      updateMessage("ライブラリを初期化中...");
-      startButton.disabled = true;
+      if (objectDetection) return; // すでに初期化済みの場合は何もしない
 
       try {
+        showLoading(true);
+        updateMessage("ライブラリを初期化中...");
+        startButton.disabled = true;
+
+
         objectDetection = new ObjectDetection({
           locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/${file}`;
@@ -167,6 +170,7 @@
           minDetectionConfidence: 0.5,
         });
 
+
         setupObjectDetection();
         await startCamera();
 
@@ -175,6 +179,7 @@
         updateMessage("エラー: " + (error.message || 'ライブラリの初期化に失敗しました'));
         startButton.disabled = false;
         showLoading(false);
+        objectDetection = null; // 初期化失敗時にはnullに戻す
       }
     }
 
@@ -184,7 +189,6 @@
 
       try {
         updateMessage('カメラを起動中...');
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
 
         camera = new Camera(video, {
           onFrame: async () => {
@@ -214,6 +218,7 @@
         updateMessage(errorMessage);
         updateButtons(false);
         showLoading(false);
+         cameraStarted = false; // エラー時にはfalseに戻す
       }
     }
 
@@ -262,7 +267,6 @@
     }
 
 
-
     // エラーハンドリング
     window.onerror = function(msg, url, lineNo, columnNo, error) {
       console.error('Global error:', msg, url, lineNo, columnNo, error);
@@ -271,7 +275,6 @@
       updateButtons(false);
       return false;
     };
-
   </script>
 </body>
 </html>
