@@ -4,10 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Object Detection</title>
-  <!-- MediaPipeのライブラリを読み込む -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/objectron/objectron.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/object_detection.js" async></script>
   <style>
     body {
       margin: 0;
@@ -78,65 +77,90 @@
     const messageDiv = document.getElementById('message');
     const ctx = canvas.getContext('2d');
 
-    // キャンバスのサイズをウィンドウに合わせる
     function resizeCanvas() {
       const container = document.querySelector('.container');
       canvas.width = container.clientWidth;
       canvas.height = container.clientHeight;
     }
-    
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // Objectronの設定
-    const objectron = new Objectron({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/objectron/${file}`;
-      }
-    });
+    let objectDetection;
+    let cameraStarted = false;
 
-    console.log('Objectron initialized'); // デバッグログ
+    // Object Detectionの設定とカメラの起動
+    async function createDetector() {
+        messageDiv.textContent = "ライブラリを読み込んでいます...";
+        const od = new ObjectDetection({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/${file}`;
+            }
+        });
+        od.setOptions({
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+        });
+        objectDetection = od;
+        messageDiv.textContent = "ライブラリの読み込みが完了しました";
+        await startCamera();
 
-    objectron.setOptions({
-      modelName: 'Chair',
-      maxNumObjects: 5,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
+    }
 
-    console.log('Objectron options set'); // デバッグログ
+    // カメラの起動
+    async function startCamera() {
+        if(cameraStarted){ return }
+        const camera = new Camera(video, {
+            onFrame: async () => {
+                if (!objectDetection) {
+                    return; // まだobjectDetectionが初期化されていない場合はreturn
+                }
+                await objectDetection.send({image: video});
+            },
+            width: 1280,
+            height: 720,
+            facingMode: 'environment'
+        });
+        try {
+            messageDiv.textContent = 'カメラを起動中...'
+            await camera.start();
+            cameraStarted = true;
+            console.log('Camera started successfully');
+            messageDiv.textContent = 'カメラ起動完了';
+            setTimeout(() => {
+               messageDiv.textContent = '';
+            }, 2000);
 
-    // カメラの設定
-    const camera = new Camera(video, {
-      onFrame: async () => {
-        console.log('Camera frame captured'); // デバッグログ
-        await objectron.send({image: video});
-      },
-      width: 1280,
-      height: 720,
-      facingMode: 'environment'
-    });
 
-    console.log('Camera initialized'); // デバッグログ
+        } catch (error) {
+            console.error('Camera start error:', error);
+            messageDiv.textContent = 'カメラの起動に失敗しました';
+        }
+
+    }
 
     // 検出結果の処理
-    objectron.onResults(results => {
-      console.log('Results received', results); // デバッグログ
-
+    objectDetection?.onResults(results => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
-      if (results.objectDetections && results.objectDetections.length > 0) {
-        results.objectDetections.forEach(detection => {
-          console.log('Detection found:', detection); // デバッグログ
-
-          // 検出された物体の周りに枠を描画
-          const landmarks = detection.keypoints;
+      if (results.detections) {
+        results.detections.forEach(detection => {
+          // 境界ボックスを描画
+          const boundingBox = detection.boundingBox;
           ctx.strokeStyle = '#00FF00';
           ctx.lineWidth = 4;
+          ctx.strokeRect(
+              boundingBox.xMin * canvas.width,
+              boundingBox.yMin * canvas.height,
+              boundingBox.width * canvas.width,
+              boundingBox.height * canvas.height
+          );
 
           // 物体の種類と信頼度を表示
-          messageDiv.textContent = `${detection.categories[0].categoryName} (${(detection.categories[0].score * 100).toFixed(1)}%)`;
+          const categoryName = detection.categories[0].categoryName || '不明な物体';
+          const score = (detection.categories[0].score * 100).toFixed(1);
+
+          messageDiv.textContent = `${categoryName} (${score}%)`;
         });
       } else {
         messageDiv.textContent = '';
@@ -145,25 +169,21 @@
 
     // 開始ボタンの処理
     document.getElementById('start').addEventListener('click', () => {
-      console.log('Start button clicked'); // デバッグログ
-      messageDiv.textContent = 'カメラを起動中...';
-      camera.start()
-        .then(() => {
-          console.log('Camera started successfully'); // デバッグログ
-          messageDiv.textContent = 'カメラ起動完了';
-        })
-        .catch(error => {
-          console.error('Camera start error:', error); // デバッグログ
-          messageDiv.textContent = 'カメラの起動に失敗しました';
-        });
+        createDetector();
     });
+
+
 
     // 停止ボタンの処理
     document.getElementById('stop').addEventListener('click', () => {
-      console.log('Stop button clicked'); // デバッグログ
-      camera.stop();
-      messageDiv.textContent = '';
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (!camera || !cameraStarted) return;
+
+        console.log('Stop button clicked'); // デバッグログ
+        camera.stop();
+        cameraStarted = false;
+
+        messageDiv.textContent = '';
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
     });
 
     // エラーハンドリング
@@ -172,6 +192,7 @@
       messageDiv.textContent = 'エラーが発生しました';
       return false;
     };
+
   </script>
 </body>
 </html>
