@@ -77,9 +77,9 @@
       100% { transform: rotate(360deg); }
     }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" async></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" async></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/object_detection.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" async></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection@0.4/object_detection.js" async></script>
 </head>
 <body>
   <div class="container">
@@ -96,16 +96,14 @@
   </div>
 
   <script>
-    let camera = null;
-    let objectDetection = null;
-    let cameraStarted = false;
-
-    // DOMElements
+    let objectDetector;
+    let camera;
+    let runningMode = "IMAGE";
     let video, canvas, messageDiv, messageText, loadingIndicator, startButton, stopButton, ctx;
 
+
     // ページ読み込み完了時の処理
-    window.addEventListener('load', async () => {
-      // DOM要素の取得
+    window.addEventListener('load', () => {
       video = document.getElementById('input');
       canvas = document.getElementById('output');
       messageDiv = document.getElementById('message');
@@ -115,14 +113,110 @@
       stopButton = document.getElementById('stop');
       ctx = canvas.getContext('2d');
 
-      // イベントリスナーの設定
       window.addEventListener('resize', resizeCanvas);
-      startButton.addEventListener('click', createDetector);
-      stopButton.addEventListener('click', stopCamera);
+      startButton.addEventListener('click', startDetection);
+      stopButton.addEventListener('click', stopDetection);
 
       resizeCanvas();
       updateMessage('準備完了');
+
     });
+
+    async function startDetection() {
+        updateMessage("モデルを読み込み中...");
+        showLoading(true);
+        startButton.disabled = true;
+        stopButton.disabled = false;
+
+        try {
+          objectDetector = new ObjectDetection({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection@0.4/${file}`;
+          }});
+          objectDetector.setOptions({
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5
+          });
+          objectDetector.onResults(onResults);
+          updateMessage("カメラを起動中...")
+
+          if (runningMode === "IMAGE") {
+              runningMode = "VIDEO";
+              await startCamera();
+          }
+        } catch(e) {
+          console.error("モデルの読み込みエラー", e);
+            updateMessage("エラーが発生しました:" + (e.message || ''));
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            showLoading(false);
+        }
+    }
+
+    async function stopDetection() {
+        if (runningMode === "VIDEO") {
+            updateMessage("カメラを停止中...");
+            await camera.stop();
+            video.srcObject = null;
+
+            updateButtons(false);
+            updateMessage('');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            runningMode = "IMAGE";
+        }
+    }
+
+
+      async function startCamera() {
+          camera = new Camera(video, {
+            onFrame: async () => {
+              await objectDetector.send({image: video});
+            },
+            width: 1280,
+            height: 720,
+            facingMode: 'environment'
+          });
+          try {
+            await camera.start();
+            updateMessage("起動完了", 2000);
+            showLoading(false);
+          } catch (error) {
+            console.error('Camera start error:', error);
+            let errorMessage = 'カメラの起動に失敗しました';
+            if (error.name === 'NotAllowedError') {
+              errorMessage = 'カメラへのアクセスが許可されていません';
+            } else if (error.name === 'NotFoundError') {
+              errorMessage = 'カメラが見つかりません';
+            }
+            updateMessage(errorMessage);
+            updateButtons(false);
+            showLoading(false);
+          }
+
+      }
+
+
+    function onResults(results) {
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+      if (results.detections != null) {
+        for (const detection of results.detections) {
+          drawRectangle(
+              detection.boundingBox, { color: 'blue', lineWidth: 4 });
+        }
+      }
+      ctx.restore();
+    }
+
+
+    function drawRectangle(boundingBox, style) {
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = style.lineWidth;
+      ctx.strokeRect(boundingBox.xMin * canvas.width,
+          boundingBox.yMin * canvas.height,
+          boundingBox.width * canvas.width,
+          boundingBox.height * canvas.height);
+    }
 
 
     function resizeCanvas() {
@@ -150,123 +244,6 @@
     }
 
 
-    async function createDetector() {
-      if (objectDetection) return; // すでに初期化済みの場合は何もしない
-
-      try {
-        showLoading(true);
-        updateMessage("ライブラリを初期化中...");
-        startButton.disabled = true;
-
-
-        objectDetection = new ObjectDetection({
-          locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/${file}`;
-          }
-        });
-
-        objectDetection.setOptions({
-          modelComplexity: 1,
-          minDetectionConfidence: 0.5,
-        });
-
-
-        setupObjectDetection();
-        await startCamera();
-
-      } catch (error) {
-        console.error('Detector creation error:', error);
-        updateMessage("エラー: " + (error.message || 'ライブラリの初期化に失敗しました'));
-        startButton.disabled = false;
-        showLoading(false);
-        objectDetection = null; // 初期化失敗時にはnullに戻す
-      }
-    }
-
-
-    async function startCamera() {
-      if (cameraStarted) return;
-
-      try {
-        updateMessage('カメラを起動中...');
-
-        camera = new Camera(video, {
-          onFrame: async () => {
-            if (objectDetection) {
-              await objectDetection.send({image: video});
-            }
-          },
-          width: 1280,
-          height: 720,
-          facingMode: 'environment'
-        });
-
-        await camera.start();
-        cameraStarted = true;
-        updateButtons(true);
-        updateMessage('カメラ起動完了', 2000);
-        showLoading(false);
-
-      } catch (error) {
-        console.error('Camera start error:', error);
-        let errorMessage = 'カメラの起動に失敗しました';
-        if (error.name === 'NotAllowedError') {
-          errorMessage = 'カメラへのアクセスが許可されていません';
-        } else if (error.name === 'NotFoundError') {
-          errorMessage = 'カメラが見つかりません';
-        }
-        updateMessage(errorMessage);
-        updateButtons(false);
-        showLoading(false);
-         cameraStarted = false; // エラー時にはfalseに戻す
-      }
-    }
-
-
-    async function stopCamera() {
-      if (!camera || !cameraStarted) return;
-
-      try {
-        await camera.stop();
-        cameraStarted = false;
-        updateButtons(false);
-        updateMessage('');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      } catch (error) {
-        console.error('Camera stop error:', error);
-        updateMessage('カメラの停止に失敗しました');
-      }
-    }
-
-
-    function setupObjectDetection() {
-      objectDetection.onResults(results => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-        if (results.detections && results.detections.length > 0) {
-          results.detections.forEach(detection => {
-            const boundingBox = detection.boundingBox;
-            ctx.strokeStyle = '#00FF00';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(
-              boundingBox.xMin * canvas.width,
-              boundingBox.yMin * canvas.height,
-              boundingBox.width * canvas.width,
-              boundingBox.height * canvas.height
-            );
-
-            const categoryName = detection.categories[0].categoryName || '不明な物体';
-            const score = (detection.categories[0].score * 100).toFixed(1);
-            updateMessage(`${categoryName} (${score}%)`);
-          });
-        } else {
-          updateMessage('');
-        }
-      });
-    }
-
-
     // エラーハンドリング
     window.onerror = function(msg, url, lineNo, columnNo, error) {
       console.error('Global error:', msg, url, lineNo, columnNo, error);
@@ -275,6 +252,7 @@
       updateButtons(false);
       return false;
     };
+
   </script>
 </body>
 </html>
