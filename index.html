@@ -4,12 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Object Detection</title>
-  <!-- scriptの読み込みをdeferに変更し、読み込み順序を保証 -->
-  <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/object_detection.js"></script>
   <style>
-    /* 前回と同じスタイル定義 */
+    /* スタイル定義は変更ありません */
     body {
       margin: 0;
       padding: 0;
@@ -97,28 +93,15 @@
     <button id="stop" disabled>停止</button>
   </div>
 
-  <script>
-    let camera = null;
-    let objectDetection = null;
-    let cameraStarted = false;
+  <script type="module">
+    import { FilesetResolver, ObjectDetector } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0';
+
+    let objectDetector;
     let isInitialized = false;
+    let isDetecting = false;
 
-    // DOMElements
+    // DOM要素
     let video, canvas, messageDiv, messageText, loadingIndicator, startButton, stopButton, ctx;
-
-    // ライブラリの読み込みを待つ
-    function waitForLibraries() {
-      return new Promise((resolve, reject) => {
-        const checkLibraries = () => {
-          if (typeof ObjectDetection === 'undefined' || typeof Camera === 'undefined') {
-            setTimeout(checkLibraries, 100);
-          } else {
-            resolve();
-          }
-        };
-        checkLibraries();
-      });
-    }
 
     // 初期化関数
     async function initialize() {
@@ -136,11 +119,12 @@
 
       // イベントリスナーの設定
       window.addEventListener('resize', resizeCanvas);
-      startButton.addEventListener('click', createDetector);
-      stopButton.addEventListener('click', stopCamera);
+      startButton.addEventListener('click', startDetection);
+      stopButton.addEventListener('click', stopDetection);
 
       resizeCanvas();
       isInitialized = true;
+      updateMessage('準備完了');
     }
 
     function resizeCanvas() {
@@ -167,69 +151,60 @@
       stopButton.disabled = !started;
     }
 
-    async function createDetector() {
+    async function startDetection() {
       try {
         showLoading(true);
-        updateMessage("ライブラリを初期化中...");
+        updateMessage('初期化中...');
+
         startButton.disabled = true;
 
-        // ライブラリの読み込みを待つ
-        await waitForLibraries();
+        // Object Detectorの初期化
+        const vision = await FilesetResolver.forVisionTasks(
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
+        );
 
-        const od = new ObjectDetection({
-          locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection/${file}`;
-          }
+        objectDetector = await ObjectDetector.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0.tflite',
+            delegate: 'GPU'
+          },
+          maxResults: 5,
+          scoreThreshold: 0.5
         });
 
-        od.setOptions({
-          modelComplexity: 1,
-          minDetectionConfidence: 0.5,
-        });
-
-        objectDetection = od;
-        setupObjectDetection();
+        // カメラの起動
         await startCamera();
       } catch (error) {
-        console.error('Detector creation error:', error);
-        updateMessage("エラー: " + (error.message || 'ライブラリの初期化に失敗しました'));
+        console.error('Detector initialization error:', error);
+        updateMessage('エラー: ' + (error.message || 'ライブラリの初期化に失敗しました'));
         startButton.disabled = false;
+      } finally {
         showLoading(false);
       }
     }
 
     async function startCamera() {
-      if (cameraStarted) return;
-
       try {
+        if (isDetecting) return;
+
         updateMessage('カメラを起動中...');
-        
-        // カメラの権限を確認
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
             facingMode: 'environment',
             width: { ideal: 1280 },
             height: { ideal: 720 }
-          } 
-        });
-        stream.getTracks().forEach(track => track.stop());
-
-        camera = new Camera(video, {
-          onFrame: async () => {
-            if (objectDetection) {
-              await objectDetection.send({image: video});
-            }
-          },
-          width: 1280,
-          height: 720,
-          facingMode: 'environment'
+          }
         });
 
-        await camera.start();
-        cameraStarted = true;
+        video.srcObject = stream;
+        await video.play();
+
+        isDetecting = true;
         updateButtons(true);
         updateMessage('カメラ起動完了', 2000);
-        showLoading(false);
+
+        requestAnimationFrame(processFrame);
       } catch (error) {
         console.error('Camera start error:', error);
         let errorMessage = 'カメラの起動に失敗しました';
@@ -244,12 +219,51 @@
       }
     }
 
-    async function stopCamera() {
-      if (!camera || !cameraStarted) return;
+    function processFrame() {
+      if (!isDetecting) return;
 
+      // VideoフレームをCanvasに描画
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Object Detectionを実行
+      const detectionResult = objectDetector.detectForVideo(video, Date.now());
+
+      // 前のフレームをクリア
+      // ctx.clearRect(0, 0, canvas.width, canvas.height); // 必要に応じてコメント解除
+
+      // 検出結果を描画
+      if (detectionResult.detections) {
+        detectionResult.detections.forEach(detection => {
+          const boundingBox = detection.boundingBox;
+
+          ctx.strokeStyle = '#00FF00';
+          ctx.lineWidth = 4;
+          ctx.strokeRect(
+            boundingBox.originX * canvas.width,
+            boundingBox.originY * canvas.height,
+            boundingBox.width * canvas.width,
+            boundingBox.height * canvas.height
+          );
+
+          const categoryName = detection.categories[0].categoryName || '不明な物体';
+          const score = (detection.categories[0].score * 100).toFixed(1);
+          updateMessage(`${categoryName} (${score}%)`);
+        });
+      }
+
+      requestAnimationFrame(processFrame);
+    }
+
+    async function stopDetection() {
+      if (!isDetecting) return;
       try {
-        await camera.stop();
-        cameraStarted = false;
+        const stream = video.srcObject;
+        if (stream) {
+          const tracks = stream.getTracks();
+          tracks.forEach(track => track.stop());
+        }
+        video.srcObject = null;
+        isDetecting = false;
         updateButtons(false);
         updateMessage('');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -259,53 +273,22 @@
       }
     }
 
-    function setupObjectDetection() {
-      objectDetection.onResults(results => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-        if (results.detections && results.detections.length > 0) {
-          results.detections.forEach(detection => {
-            const boundingBox = detection.boundingBox;
-            ctx.strokeStyle = '#00FF00';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(
-              boundingBox.xMin * canvas.width,
-              boundingBox.yMin * canvas.height,
-              boundingBox.width * canvas.width,
-              boundingBox.height * canvas.height
-            );
-
-            const categoryName = detection.categories[0].categoryName || '不明な物体';
-            const score = (detection.categories[0].score * 100).toFixed(1);
-            updateMessage(`${categoryName} (${score}%)`);
-          });
-        } else {
-          updateMessage('');
-        }
-      });
-    }
-
-    // ページ読み込み完了時の処理
     window.addEventListener('load', async () => {
       try {
         await initialize();
-        await waitForLibraries();
-        updateMessage('準備完了');
       } catch (error) {
         console.error('Initialization error:', error);
-        updateMessage('ライブラリの読み込みに失敗しました。ページを再読み込みしてください。');
+        updateMessage('初期化に失敗しました');
       }
     });
 
     // エラーハンドリング
-    window.onerror = function(msg, url, lineNo, columnNo, error) {
-      console.error('Global error:', msg, url, lineNo, columnNo, error);
-      updateMessage('エラーが発生しました: ' + msg);
+    window.addEventListener('error', (event) => {
+      console.error('Global error:', event.error);
+      updateMessage('エラーが発生しました: ' + event.message);
       showLoading(false);
       updateButtons(false);
-      return false;
-    };
+    });
   </script>
 </body>
 </html>
