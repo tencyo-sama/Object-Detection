@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -76,9 +77,6 @@
       100% { transform: rotate(360deg); }
     }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" async></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" async></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/object_detection@0.5/object_detection.js" async></script>
 </head>
 <body>
   <div class="container">
@@ -95,153 +93,37 @@
   </div>
 
   <script>
-    let objectDetector;
-    let camera;
-    let runningMode = "IMAGE";
-    let video, canvas, messageDiv, messageText, loadingIndicator, startButton, stopButton, ctx;
-
-    window.addEventListener('load', () => {
-      video = document.getElementById('input');
-      canvas = document.getElementById('output');
-      messageDiv = document.getElementById('message');
-      messageText = document.getElementById('message-text');
-      loadingIndicator = document.getElementById('loading');
-      startButton = document.getElementById('start');
-      stopButton = document.getElementById('stop');
-      ctx = canvas.getContext('2d');
-
-      window.addEventListener('resize', resizeCanvas);
-      startButton.addEventListener('click', startDetection);
-      stopButton.addEventListener('click', stopDetection);
-
-      resizeCanvas();
-      updateMessage('準備完了');
-    });
-
-    async function startDetection() {
-      updateMessage("モデルを読み込み中...");
-      showLoading(true);
-      startButton.disabled = true;
-      stopButton.disabled = false;
-
-      try {
-        objectDetector = new mediapipe.ObjectDetection({
-          locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/object_detection@0.5/${file}`;
-          },
-          modelComplexity: 1,
-          minDetectionConfidence: 0.5
+    // ライブラリの読み込み
+    async function loadMediaPipe() {
+      const scripts = [
+        'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js',
+        'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js',
+        'https://cdn.jsdelivr.net/npm/@mediapipe/objectron/objectron.js'
+      ];
+      for (const script of scripts) {
+        await new Promise((resolve, reject) => {
+          const tag = document.createElement('script');
+          tag.src = script;
+          tag.async = true;
+          tag.onload = resolve;
+          tag.onerror = reject;
+          document.head.appendChild(tag);
         });
-        objectDetector.onResults(onResults);
-        updateMessage("カメラを起動中...");
-
-        if (runningMode === "IMAGE") {
-          runningMode = "VIDEO";
-          await startCamera();
-        }
-      } catch(e) {
-        console.error("モデルの読み込みエラー", e);
-        updateMessage("エラーが発生しました:" + (e.message || ''));
-        startButton.disabled = false;
-        stopButton.disabled = true;
-        showLoading(false);
       }
     }
 
-    async function stopDetection() {
-      if (runningMode === "VIDEO") {
-        updateMessage("カメラを停止中...");
-        await camera.stop();
-        video.srcObject = null;
-
-        updateButtons(false);
-        updateMessage('');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        runningMode = "IMAGE";
-      }
+    // 初期化処理
+    async function initialize() {
+      await loadMediaPipe();
+      updateMessage('MediaPipeライブラリが読み込まれました');
     }
 
-    async function startCamera() {
-      camera = new Camera(video, {
-        onFrame: async () => {
-          await objectDetector.send({image: video});
-        },
-        width: 1280,
-        height: 720,
-        facingMode: 'environment'
-      });
-      try {
-        await camera.start();
-        updateMessage("起動完了", 2000);
-        showLoading(false);
-      } catch (error) {
-        console.error('Camera start error:', error);
-        let errorMessage = 'カメラの起動に失敗しました';
-        if (error.name === 'NotAllowedError') {
-          errorMessage = 'カメラへのアクセスが許可されていません';
-        } else if (error.name === 'NotFoundError') {
-          errorMessage = 'カメラが見つかりません';
-        }
-        updateMessage(errorMessage);
-        updateButtons(false);
-        showLoading(false);
-      }
+    function updateMessage(msg) {
+      const messageDiv = document.getElementById('message-text');
+      messageDiv.textContent = msg;
     }
 
-    function onResults(results) {
-      ctx.save();
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-      if (results.detections != null) {
-        for (const detection of results.detections) {
-          drawRectangle(
-              detection.boundingBox, { color: 'blue', lineWidth: 4 });
-        }
-      }
-      ctx.restore();
-    }
-
-    function drawRectangle(boundingBox, style) {
-      ctx.strokeStyle = style.color;
-      ctx.lineWidth = style.lineWidth;
-      ctx.strokeRect(boundingBox.xMin * canvas.width,
-          boundingBox.yMin * canvas.height,
-          boundingBox.width * canvas.width,
-          boundingBox.height * canvas.height);
-    }
-
-    function resizeCanvas() {
-      const container = document.querySelector('.container');
-      canvas.width = container.clientWidth;
-      canvas.height = container.clientHeight;
-    }
-
-    function showLoading(show) {
-      loadingIndicator.style.display = show ? 'block' : 'none';
-    }
-
-    function updateMessage(text, timeout = 0) {
-      messageText.textContent = text;
-      if (timeout > 0) {
-        setTimeout(() => {
-          messageText.textContent = '';
-        }, timeout);
-      }
-    }
-
-    function updateButtons(started) {
-      startButton.disabled = started;
-      stopButton.disabled = !started;
-    }
-
-    // エラーハンドリング
-    window.onerror = function(msg, url, lineNo, columnNo, error) {
-      console.error('Global error:', msg, url, lineNo, columnNo, error);
-      updateMessage('エラーが発生しました: ' + msg);
-      showLoading(false);
-      updateButtons(false);
-      return false;
-    };
+    window.onload = initialize;
   </script>
 </body>
 </html>
