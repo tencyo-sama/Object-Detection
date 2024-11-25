@@ -80,217 +80,202 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <canvas id="output"></canvas>
-    <video id="input" style="display: none;" playsinline></video>
-  </div>
-  <div class="message" id="message">
-    <div class="loading-indicator" id="loading"></div>
-    <div id="message-text"></div>
-  </div>
-  <div class="button-container">
-    <button id="start">開始</button>
-    <button id="stop" disabled>停止</button>
-  </div>
+    <div class="container">
+        <canvas id="output"></canvas>
+        <video id="input" style="display: none;" playsinline></video>
+    </div>
+    <div class="message" id="message">
+        <div class="loading-indicator" id="loading"></div>
+        <div id="message-text"></div>
+    </div>
+    <div class="button-container">
+        <button id="start">開始</button>
+        <button id="stop" disabled>停止</button>
+    </div>
+<script type="module">
+import { FilesetResolver, ObjectDetector } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0';
 
-  <script type="module">
-    import { FilesetResolver, ObjectDetector } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0';
 
-    let objectDetector;
-    let isInitialized = false;
-    let isDetecting = false;
+let objectDetector;
+let isDetecting = false;
 
-    // DOM要素
-    let video, canvas, messageDiv, messageText, loadingIndicator, startButton, stopButton, ctx;
+// DOM要素の取得
+const video = document.getElementById('input');
+const canvas = document.getElementById('output');
+const messageDiv = document.getElementById('message');
+const messageText = document.getElementById('message-text');
+const loadingIndicator = document.getElementById('loading');
+const startButton = document.getElementById('start');
+const stopButton = document.getElementById('stop');
+const ctx = canvas.getContext('2d');
 
-    // 初期化関数
-    async function initialize() {
-      if (isInitialized) return;
 
-      // DOM要素の取得
-      video = document.getElementById('input');
-      canvas = document.getElementById('output');
-      messageDiv = document.getElementById('message');
-      messageText = document.getElementById('message-text');
-      loadingIndicator = document.getElementById('loading');
-      startButton = document.getElementById('start');
-      stopButton = document.getElementById('stop');
-      ctx = canvas.getContext('2d');
+// キャンバスのサイズをウィンドウに合わせる
+function resizeCanvas() {
+    const container = document.querySelector('.container');
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+}
 
-      // イベントリスナーの設定
-      window.addEventListener('resize', resizeCanvas);
-      startButton.addEventListener('click', startDetection);
-      stopButton.addEventListener('click', stopDetection);
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
 
-      resizeCanvas();
-      isInitialized = true;
-      updateMessage('準備完了');
-    }
 
-    function resizeCanvas() {
-      const container = document.querySelector('.container');
-      canvas.width = container.clientWidth;
-      canvas.height = container.clientHeight;
-    }
+function showLoading(show) {
+    loadingIndicator.style.display = show ? 'block' : 'none';
+}
 
-    function showLoading(show) {
-      loadingIndicator.style.display = show ? 'block' : 'none';
-    }
-
-    function updateMessage(text, timeout = 0) {
-      messageText.textContent = text;
-      if (timeout > 0) {
+function updateMessage(text, timeout = 0) {
+    messageText.textContent = text;
+    if (timeout > 0) {
         setTimeout(() => {
-          messageText.textContent = '';
+            messageText.textContent = '';
         }, timeout);
-      }
+    }
+}
+
+function updateButtons(started) {
+    startButton.disabled = started;
+    stopButton.disabled = !started;
+}
+
+
+
+async function startDetection() {
+    if (isDetecting) {
+        return;
     }
 
-    function updateButtons(started) {
-      startButton.disabled = started;
-      stopButton.disabled = !started;
-    }
-
-    async function startDetection() {
-      try {
+    try {
         showLoading(true);
-        updateMessage('初期化中...');
+        updateButtons(true);
+        updateMessage('モデルを読み込んでいます...');
 
-        startButton.disabled = true;
-
-        // Object Detectorの初期化
+        // FilesetResolverとObjectDetectorの初期化
         const vision = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
         );
-
         objectDetector = await ObjectDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0_uint8.tflite',
-            delegate: 'GPU'
-          },
-          maxResults: 5,
-          scoreThreshold: 0.5
+            baseOptions: {
+                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detection/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
+                delegate: 'GPU'
+            },
+            runningMode: "VIDEO",
+            maxResults: 5,
+            scoreThreshold: 0.5
         });
+        updateMessage('モデルの読み込みが完了しました。カメラを起動中...');
 
-        // カメラの起動
+
         await startCamera();
-      } catch (error) {
-        console.error('Detector initialization error:', error);
-        updateMessage('エラー: ' + (error.message || 'ライブラリの初期化に失敗しました'));
-        startButton.disabled = false;
-      } finally {
+    } catch (error) {
+        console.error('Error initializing detector:', error);
+        updateMessage('エラー: ' + (error.message || '初期化に失敗しました'));
+        updateButtons(false);
         showLoading(false);
-      }
     }
+}
 
-    async function startCamera() {
-      try {
-        if (isDetecting) return;
 
-        updateMessage('カメラを起動中...');
-
+async function startCamera() {
+    try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
+            video: {facingMode: 'environment', width: {ideal: 1280}, height: {ideal: 720}}
         });
 
         video.srcObject = stream;
-        await video.play();
-
-        isDetecting = true;
-        updateButtons(true);
-        updateMessage('カメラ起動完了', 2000);
-
-        requestAnimationFrame(processFrame);
-      } catch (error) {
-        console.error('Camera start error:', error);
-        let errorMessage = 'カメラの起動に失敗しました';
-        if (error.name === 'NotAllowedError') {
-          errorMessage = 'カメラへのアクセスが許可されていません';
-        } else if (error.name === 'NotFoundError') {
-          errorMessage = 'カメラが見つかりません';
-        }
-        updateMessage(errorMessage);
+        video.onloadedmetadata = () => {
+            video.play();
+            isDetecting = true;
+            requestAnimationFrame(processFrame);
+        };
+    } catch (error) {
+        console.error('Error starting camera:', error);
+        updateMessage('エラー: ' + (error.message || 'カメラの起動に失敗しました'));
         updateButtons(false);
         showLoading(false);
-      }
+
+    }
+}
+
+
+function processFrame() {
+    if (!isDetecting || !objectDetector) {
+        return;
     }
 
-    function processFrame() {
-      if (!isDetecting) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const startTimeMs = performance.now(); // 開始時間計測
+    objectDetector.detectForVideo(video, startTimeMs)
+        .then(detectionResult => {
+            if (detectionResult.detections.length > 0) {
+                detectionResult.detections.forEach(detection => {
+                    const boundingBox = detection.boundingBox;
+                    ctx.strokeStyle = '#00FF00';
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(
+                        boundingBox.originX,
+                        boundingBox.originY,
+                        boundingBox.width,
+                        boundingBox.height
+                    );
 
-      // VideoフレームをCanvasに描画
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const categoryName = detection.categories[0].categoryName || '不明な物体';
+                    const score = (detection.categories[0].score * 100).toFixed(1);
+                    updateMessage(`${categoryName} (${score}%)`);
 
-      // Object Detectionを実行
-      const detectionResult = objectDetector.detectForVideo(video, Date.now());
-
-      // 前のフレームをクリア（必要に応じて）
-      // ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // 検出結果を描画
-      if (detectionResult.detections.length > 0) {
-        detectionResult.detections.forEach(detection => {
-          const boundingBox = detection.boundingBox;
-
-          ctx.strokeStyle = '#00FF00';
-          ctx.lineWidth = 4;
-          ctx.strokeRect(
-            boundingBox.originX * canvas.width,
-            boundingBox.originY * canvas.height,
-            boundingBox.width * canvas.width,
-            boundingBox.height * canvas.height
-          );
-
-          const categoryName = detection.categories[0].categoryName || '不明な物体';
-          const score = (detection.categories[0].score * 100).toFixed(1);
-          updateMessage(`${categoryName} (${score}%)`);
+                });
+            } else {
+                updateMessage('');
+            }
+            requestAnimationFrame(processFrame);
+        })
+        .catch(error => {
+            console.error('Error during detection:', error);
+            updateMessage('検出中にエラーが発生しました: ' + (error.message || ''));
+            updateButtons(false);
         });
-      } else {
-        updateMessage('');
-      }
+}
 
-      requestAnimationFrame(processFrame);
+
+
+// 停止ボタンの処理
+stopButton.addEventListener('click', async () => {
+    if (!isDetecting) {
+        return;
     }
-
-    async function stopDetection() {
-      if (!isDetecting) return;
-      try {
-        const stream = video.srcObject;
-        if (stream) {
-          const tracks = stream.getTracks();
-          tracks.forEach(track => track.stop());
-        }
-        video.srcObject = null;
+    try {
         isDetecting = false;
         updateButtons(false);
         updateMessage('');
+        // video.pause();
+        // video.srcObject = null;
+        if (video.srcObject) {
+            const tracks = video.srcObject.getTracks();
+            tracks.forEach(track => track.stop());
+            video.srcObject = null;
+        }
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-      } catch (error) {
-        console.error('Camera stop error:', error);
-        updateMessage('カメラの停止に失敗しました');
-      }
+    } catch (error) {
+        console.error('Error stopping detection or camera', error);
+        updateMessage('カメラの停止中にエラーが発生しました');
     }
 
-    window.addEventListener('load', async () => {
-      try {
-        await initialize();
-      } catch (error) {
-        console.error('Initialization error:', error);
-        updateMessage('初期化に失敗しました');
-      }
-    });
+});
 
-    // エラーハンドリング
-    window.addEventListener('error', (event) => {
-      console.error('Global error:', event.error);
-      updateMessage('エラーが発生しました: ' + event.message);
-      showLoading(false);
-      updateButtons(false);
-    });
-  </script>
+
+window.addEventListener('DOMContentLoaded', () => {
+
+    updateMessage('準備中...');
+    setTimeout(() => {
+        updateMessage('準備完了');
+    }, 100);
+    startButton.disabled = false;
+    stopButton.disabled = true;
+
+});
+
+
+</script>
 </body>
 </html>
