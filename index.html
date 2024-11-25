@@ -165,7 +165,7 @@
 
         objectDetector = await ObjectDetector.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0.tflite',
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.task',
             delegate: 'GPU'
           },
           maxResults: 5,
@@ -228,11 +228,11 @@
       // Object Detectionを実行
       const detectionResult = objectDetector.detectForVideo(video, Date.now());
 
-      // 前のフレームをクリア
-      // ctx.clearRect(0, 0, canvas.width, canvas.height); // 必要に応じてコメント解除
+      // 前のフレームをクリア（必要に応じて）
+      // ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       // 検出結果を描画
-      if (detectionResult.detections) {
+      if (detectionResult.detections.length > 0) {
         detectionResult.detections.forEach(detection => {
           const boundingBox = detection.boundingBox;
 
@@ -249,6 +249,8 @@
           const score = (detection.categories[0].score * 100).toFixed(1);
           updateMessage(`${categoryName} (${score}%)`);
         });
+      } else {
+        updateMessage('');
       }
 
       requestAnimationFrame(processFrame);
