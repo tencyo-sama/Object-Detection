@@ -15,18 +15,33 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      background: #000;
+      background: #1a1a1a;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }
     .container {
       width: 100%;
       height: 85vh;
       position: relative;
       overflow: hidden;
+      border-radius: 10px;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.2);
     }
     #output {
       width: 100%;
       height: 100%;
       object-fit: cover;
+    }
+    #detection-summary {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 10px 15px;
+      border-radius: 8px;
+      font-size: 16px;
+      max-height: 80%;
+      overflow-y: auto;
     }
     .button-container {
       position: fixed;
@@ -38,31 +53,48 @@
       z-index: 1000;
     }
     button {
-      padding: 15px 30px;
-      font-size: 18px;
-      border-radius: 25px;
-      border: none;
-      background: rgba(255, 255, 255, 0.9);
-      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      padding: 12px 28px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 50px;
+      border: 2px solid transparent;
+      color: #fff;
       cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    #start {
+        background-color: #4CAF50; /* Green */
+    }
+    #start:hover {
+        background-color: #45a049;
+    }
+    #stop {
+        background-color: #f44336; /* Red */
+    }
+    #stop:hover {
+        background-color: #da190b;
     }
     button:disabled {
-      background: rgba(200, 200, 200, 0.9);
+      background: #555;
+      color: #aaa;
       cursor: not-allowed;
+      box-shadow: none;
     }
     .message {
       position: fixed;
-      bottom: 100px;
+      bottom: 90px;
       left: 50%;
       transform: translateX(-50%);
-      background-color: rgba(0, 0, 0, 0.7);
+      background-color: rgba(0, 0, 0, 0.8);
       color: white;
-      padding: 10px 20px;
-      border-radius: 5px;
-      font-size: 16px;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
       z-index: 1000;
       text-align: center;
       max-width: 80%;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     .loading-indicator {
       border: 4px solid #f3f3f3;
@@ -83,6 +115,7 @@
 <body>
   <div class="container">
     <canvas id="output"></canvas>
+    <div id="detection-summary"></div>
     <video id="input" style="display: none;" playsinline></video>
   </div>
   <div class="message" id="message">
@@ -97,7 +130,7 @@
   <script>
     let model;
     let isRunning = false;
-    let video, canvas, messageDiv, messageText, loadingIndicator, startButton, stopButton, ctx;
+    let video, canvas, messageDiv, messageText, loadingIndicator, startButton, stopButton, ctx, detectionSummary;
     let animationFrameId;
 
     window.addEventListener('load', async () => {
@@ -108,6 +141,7 @@
       loadingIndicator = document.getElementById('loading');
       startButton = document.getElementById('start');
       stopButton = document.getElementById('stop');
+      detectionSummary = document.getElementById('detection-summary');
       ctx = canvas.getContext('2d');
 
       window.addEventListener('resize', resizeCanvas);
@@ -123,17 +157,18 @@
         updateMessage("モデルを読み込み中...");
         showLoading(true);
         startButton.disabled = true;
+        detectionSummary.innerHTML = '';
 
         if (!model) {
           model = await cocoSsd.load();
         }
 
         updateMessage("カメラを起動中...");
-        
+
         const constraints = {
           video: {
             facingMode: 'environment',
-            width: { ideal: 2520 },
+            width: { ideal: 1920 },
             height: { ideal: 1080 }
           }
         };
@@ -146,7 +181,7 @@
         stopButton.disabled = false;
         updateMessage("検出中", 2000);
         showLoading(false);
-        
+
         detectFrame();
 
       } catch (error) {
@@ -169,13 +204,14 @@
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
-      
+
       if (video.srcObject) {
         video.srcObject.getTracks().forEach(track => track.stop());
         video.srcObject = null;
       }
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      detectionSummary.innerHTML = '';
       startButton.disabled = false;
       stopButton.disabled = true;
       updateMessage('停止しました');
@@ -186,30 +222,43 @@
 
       try {
         const predictions = await model.detect(video);
-        
+
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        predictions.forEach(prediction => {
-          // Draw bounding box
-          ctx.strokeStyle = '#00ff00';
-          ctx.lineWidth = 4;
-          ctx.strokeRect(
-            prediction.bbox[0] * (canvas.width / video.videoWidth),
-            prediction.bbox[1] * (canvas.height / video.videoHeight),
-            prediction.bbox[2] * (canvas.width / video.videoWidth),
-            prediction.bbox[3] * (canvas.height / video.videoHeight)
-          );
 
-          // Draw label
-          ctx.fillStyle = '#00ff00';
+        const objectCounts = {};
+        predictions.forEach(prediction => {
+          objectCounts[prediction.class] = (objectCounts[prediction.class] || 0) + 1;
+
+          const x = prediction.bbox[0] * (canvas.width / video.videoWidth);
+          const y = prediction.bbox[1] * (canvas.height / video.videoHeight);
+          const width = prediction.bbox[2] * (canvas.width / video.videoWidth);
+          const height = prediction.bbox[3] * (canvas.height / video.videoHeight);
+
+          ctx.strokeStyle = '#00FF00';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, width, height);
+
+          ctx.fillStyle = '#00FF00';
+          const text = `${prediction.class} (${Math.round(prediction.score * 100)}%)`;
           ctx.font = '16px Arial';
-          ctx.fillText(
-            `${prediction.class} ${Math.round(prediction.score * 100)}%`,
-            prediction.bbox[0] * (canvas.width / video.videoWidth),
-            prediction.bbox[1] * (canvas.height / video.videoHeight) - 5
-          );
+          const textWidth = ctx.measureText(text).width;
+          const labelY = y > 20 ? y - 20 : y;
+          ctx.fillRect(x, labelY, textWidth + 10, 20);
+
+          ctx.fillStyle = '#000000';
+          ctx.fillText(text, x + 5, labelY + 15);
         });
+
+        let summaryHTML = '<h3>検出結果:</h3>';
+        if (Object.keys(objectCounts).length === 0) {
+            summaryHTML += '<div>検出中...</div>';
+        } else {
+            for (const [object, count] of Object.entries(objectCounts)) {
+                summaryHTML += `<div>- ${object}: ${count}</div>`;
+            }
+        }
+        detectionSummary.innerHTML = summaryHTML;
 
         animationFrameId = requestAnimationFrame(detectFrame);
       } catch (error) {
